@@ -5,6 +5,8 @@ This project aims to display the likely location of all Starlink satellites on a
 - Display current (likely) location of Starlink satellites on a [Leaflet](https://leafletjs.com) map 
 - Get and display current [user location](https://github.com/domoritz/leaflet-locatecontrol)
 
+![demo](img/demo.png)
+
 This project is still in a young stage and a lot of optimazation has to happen! Possible new things for the future:
 - Vue.js (?)
 - Orbit
