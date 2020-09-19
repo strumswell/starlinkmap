@@ -1,8 +1,13 @@
+/* TODO: Refactoring.
+ * Especially: The markers contain the TLEs for the orbit and there is
+ * a tle Array (line 14). I don't want to store the tles twice
+ */
+
 let leafletMap;
 let attribution;
 let satIcon = L.icon({
   iconUrl: "img/sat_icon.png",
-  iconSize: [40, 40],
+  iconSize: [30, 30],
 });
 let tleDate;
 let tleTime;
@@ -34,7 +39,10 @@ async function parseTles() {
   tlesArray.shift();
 
   return tlesArray.reduce((result, currentEntry, index) => {
-    if (index % 3 === 0) result.push([]);
+    if (index % 3 === 0) {
+      currentEntry = currentEntry.trim();
+      result.push([]);
+    }
     result[result.length - 1].push(currentEntry);
     return result; // restructured (multidimens) array
   }, tles);
@@ -49,7 +57,7 @@ async function getPositions(parsedTLEs) {
       positionAndVelocity.position,
       satellite.gstime(currentDate)
     );
-    result.push([currentEntry[0].trim(), positionGd]);
+    result.push([currentEntry, positionGd]);
     return result;
   }, []);
 }
@@ -59,7 +67,7 @@ async function getFeatures(satellites) {
     result.push({
       type: "Feature",
       properties: {
-        name: currentEntry[0],
+        tle: currentEntry[0],
         height: currentEntry[1].height,
       },
       geometry: {
@@ -104,10 +112,53 @@ async function updateFeatures(markers) {
   });
 }
 
+function getOrbitFeatures(tle) {
+  let orbitLines = [[]];
+  let orbitLinesIndex = 0;
+  let currentTime = new Date().getTime() - 2700000;
+  let endTime = currentTime + 5400000;
+  let step = 20000;
+  let lastLon;
+
+  for (currentTime; currentTime <= endTime; currentTime += step) {
+    let satrec = satellite.twoline2satrec(tle[1], tle[2]);
+    let positionAndVelocity = satellite.propagate(
+      satrec,
+      new Date(currentTime)
+    );
+    let positionGd = satellite.eciToGeodetic(
+      positionAndVelocity.position,
+      satellite.gstime(new Date(currentTime))
+    );
+    let lon = satellite.degreesLong(positionGd.longitude);
+    let lat = satellite.degreesLat(positionGd.latitude);
+
+    if (lastLon >>> 63 !== lon >>> 63 && Math.abs(lastLon) > 100) {
+      orbitLinesIndex++;
+      orbitLines.push([[lon, lat]]);
+    } else {
+      orbitLines[orbitLinesIndex].push([lon, lat]);
+    }
+    lastLon = lon;
+  }
+
+  let orbitFeatures = [];
+  orbitLines.forEach((line) => {
+    orbitFeatures.push({
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates: line,
+      },
+    });
+  });
+  return orbitFeatures;
+}
+
 async function initializeMap() {
   leafletMap = await L.map(document.getElementById("map"), {
-    zoom: 6,
-    center: [52, 10],
+    zoom: 4,
+    center: [48.13, 11.57],
     worldCopyJump: false,
     attributionControl: false,
     layers: [L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png")],
@@ -129,6 +180,7 @@ async function initializeMap() {
 
 async function drawMarkers(features) {
   let markers = [];
+  let orbitLayer = L.layerGroup();
   attribution.setPrefix(
     ' <a href="https://www.celestrak.com/NORAD/elements/supplemental/" target="_blank">TLE</a>: ' +
       tleDate.toLocaleTimeString() +
@@ -140,7 +192,7 @@ async function drawMarkers(features) {
   L.geoJSON(features, {
     pointToLayer: function (feature, latlng) {
       let marker = L.marker(latlng, { icon: satIcon }).bindPopup(
-        feature.properties.name +
+        feature.properties.tle[0] +
           " (" +
           feature.properties.height.toFixed(2) +
           " km)"
@@ -153,18 +205,30 @@ async function drawMarkers(features) {
         click: function () {
           // do manually cause auto open seems buggy on a few markers
           layer.openPopup();
+          orbitLayer
+            .addLayer(
+              L.geoJSON(getOrbitFeatures(feature.properties.tle), {
+                style: {
+                  color: "gray",
+                },
+              })
+            )
+            .addTo(leafletMap);
         },
         move: function () {
           if (layer.getPopup().isOpen()) {
             layer
               .getPopup()
               .setContent(
-                feature.properties.name +
+                feature.properties.tle[0] +
                   " (" +
                   feature.properties.height.toFixed(2) +
                   " km)"
               );
           }
+        },
+        popupclose: function () {
+          orbitLayer.clearLayers();
         },
       });
     },
